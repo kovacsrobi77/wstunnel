@@ -6,6 +6,8 @@ import ssl
 import functools
 import json
 import hmac
+import threading
+import time
 from urllib.parse import urlparse, parse_qs
 from collections import namedtuple
 import constants
@@ -85,9 +87,10 @@ def verify_token(expected, received, default):
         return False
     return hmac.compare_digest(expected, received)
 
-async def ws_server(ws, path, routes, idle_timeout, watchdog_server):
+async def ws_server(ws, path="", routes="", idle_timeout="", watchdog_server=""):
     peername = ws.transport.get_extra_info("peername")
-    path = urlparse(path)
+    #path = urlparse(path)
+    path = urlparse(ws.request.path)
     logger.debug(f'New Websocket connection from {peername}, path={path.path}')
     try:
         received_token = parse_qs(path.query)['t'][0]
@@ -96,13 +99,14 @@ async def ws_server(ws, path, routes, idle_timeout, watchdog_server):
     try:
         upstream_proto, upstream_addr, expected_token = routes[path.path]
     except KeyError:
-        logger.info(f'Rejected Websocket connection from {peername}: no route')
+        logger.info(f'Rejected Websocket connection from {peername}, path={path.path}: no route')
         return
     try:
-        if not verify_token(expected_token, received_token, default=True):
-            logger.info(f'Rejected Websocket connection from {peername}: password mismatch')
-            return
-        logger.info(f'Accepted Websocket connection from {peername}')
+        if args.no_password_check != 1:
+            if not verify_token(expected_token, received_token, default=True):
+                logger.info(f'Rejected Websocket connection from {peername}, path={path.path}: password mismatch')
+                return
+        logger.info(f'Accepted Websocket connection from {peername}, path={path.path}')
         que = asyncio.Queue()
         loop = asyncio.get_running_loop()
         if upstream_proto == 'udp':
@@ -163,7 +167,7 @@ def parse_routes(routes_json):
         ret[k] = Route(protocol, tuple(endpoint), token)
     return ret
 
-def main(args):
+async def main(args):
     local_addr = args.listen.split(':', 1)
     local_addr[1] = int(local_addr[1])
     routes = parse_routes(args.routes)
@@ -179,19 +183,28 @@ def main(args):
     else:
         logger.warning('Secure connection is disabled')
         ssl_param = dict()
-    loop = asyncio.get_event_loop()
+    #loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
+    #loop = asyncio.new_event_loop()
+    # loop = asyncio.create_future()
     watchdog_server = wd.WatchdogServer(loop).start()
     ws_server_bound = functools.partial(ws_server,
                                         routes=routes,
                                         idle_timeout=args.idle_timeout,
                                         watchdog_server = watchdog_server)
-    loop.run_until_complete(
-        websockets.serve(ws_server_bound,
+    # loop.run_until_complete(
+    #thread = threading.Thread(target = loop.run_forever)
+    #thread.start()
+    #time.sleep(1)
+    
+    #print("a")
+    server = await websockets.serve(ws_server_bound,
                          local_addr[0], local_addr[1],
                          max_size = constants.WS_MAX_MSG_SIZE_COMP, max_queue = None,
                          compression = 'deflate' if args.enable_compress else None,
-                         **ssl_param))
-    loop.run_forever()
+                         **ssl_param)#)
+    await server.serve_forever()
+    # thread.join()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Wstunnel server')
@@ -203,6 +216,7 @@ if __name__ == "__main__":
     parser.add_argument('--enable-compress', type=bool, const=True, nargs='?', help='Compress data before sending')
     parser.add_argument('--log-file', type=str, metavar='FILE', help='Log to FILE')
     parser.add_argument('--log-level', type=str, default="info", choices=['debug', 'info', 'error', 'critical'], help='Log level')
+    parser.add_argument('--no-password-check', type=bool, const=False, nargs='?', help='Do not verify password on server side.')
     args = parser.parse_args()
     if args.log_level == 'debug':
         log_level = logging.DEBUG
@@ -220,4 +234,4 @@ if __name__ == "__main__":
     logging.basicConfig(**logging_config_param)
     logger.setLevel(log_level)
     wd.logger.setLevel(log_level)
-    main(args)
+    asyncio.run(main(args))
