@@ -6,8 +6,6 @@ import ssl
 import functools
 import json
 import hmac
-import threading
-import time
 from urllib.parse import urlparse, parse_qs
 from collections import namedtuple
 import constants
@@ -183,28 +181,18 @@ async def main(args):
     else:
         logger.warning('Secure connection is disabled')
         ssl_param = dict()
-    #loop = asyncio.get_event_loop()
     loop = asyncio.get_running_loop()
-    #loop = asyncio.new_event_loop()
-    # loop = asyncio.create_future()
     watchdog_server = wd.WatchdogServer(loop).start()
     ws_server_bound = functools.partial(ws_server,
                                         routes=routes,
                                         idle_timeout=args.idle_timeout,
                                         watchdog_server = watchdog_server)
-    # loop.run_until_complete(
-    #thread = threading.Thread(target = loop.run_forever)
-    #thread.start()
-    #time.sleep(1)
-    
-    #print("a")
     server = await websockets.serve(ws_server_bound,
                          local_addr[0], local_addr[1],
                          max_size = constants.WS_MAX_MSG_SIZE_COMP, max_queue = None,
                          compression = 'deflate' if args.enable_compress else None,
                          **ssl_param)#)
     await server.serve_forever()
-    # thread.join()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Wstunnel server')
