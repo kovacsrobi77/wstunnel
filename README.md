@@ -32,6 +32,7 @@ optional arguments:
   --log-file FILE       Log to FILE
   --log-level {debug,info,error,critical}
                         Log level
+  --no-password-check   No password check on server side
 ```
 
 ## Client
